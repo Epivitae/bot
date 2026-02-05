@@ -43,6 +43,9 @@ jobs:
             echo "📄 UID 文件有更新，正在提交..."
             git add python/seen_uids.txt
             git commit -m "Update seen UIDs [skip ci]"
+            
+            # 👇 关键修复：先拉取远程最新代码，再上传
+            git pull --rebase origin main
             git push
           else
             echo "👍 没有新邮件，无需提交。"
