@@ -1,0 +1,27 @@
+name: Check Email
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'  # 每15分钟触发
+  workflow_dispatch:        # 允许手动触发
+
+jobs:
+  check-mail:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run script
+        env:
+          # 👇 关键点：把 secrets.ION_MAIL 传给 ION_MAIL_SECRET
+          ION_MAIL_SECRET: ${{ secrets.ION_MAIL }}
+        run: python action_mail.py
