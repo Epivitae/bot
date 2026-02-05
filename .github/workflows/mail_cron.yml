@@ -24,4 +24,4 @@ jobs:
         env:
           # 👇 关键点：把 secrets.ION_MAIL 传给 ION_MAIL_SECRET
           ION_MAIL_SECRET: ${{ secrets.ION_MAIL }}
-        run: python action_mail.py
+        run: python python/email-monitor.py
