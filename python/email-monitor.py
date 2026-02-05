@@ -4,9 +4,10 @@ from email.header import decode_header
 import requests
 import os
 import urllib.parse
+import datetime
+from email.utils import parsedate_to_datetime
 
-# ================= 🔐 解密区域 (适配 ION_MAIL) =================
-# 注意：这里读取的环境变量名必须和 YAML 里定义的一致
+# ================= 🔐 解密区域 =================
 raw_secrets = os.environ.get("ION_MAIL_SECRET")
 
 config = {}
@@ -16,7 +17,6 @@ if raw_secrets:
             key, value = line.split(':', 1)
             config[key.strip()] = value.strip()
 
-# 从字典中提取配置
 BARK_KEY = config.get("BARK_KEY")
 EMAIL_USER = config.get("EMAIL_USER")
 EMAIL_PASS = config.get("EMAIL_PASS")
@@ -37,10 +37,9 @@ def clean_text(text):
     return header_str
 
 def send_bark(title, content):
-    print(f"准备推送: {title}")
+    print(f"🚀 触发推送: {title}")
     enc_title = urllib.parse.quote(title)
     enc_content = urllib.parse.quote(content)
-    # GitHub 在海外，直连 Bark 即可，不需要代理
     url = f"https://api.day.app/{BARK_KEY}/{enc_title}/{enc_content}?group=Work&icon=https://www.cas.cn/images/cas_logo.png"
     try:
         requests.get(url, timeout=10)
@@ -49,46 +48,79 @@ def send_bark(title, content):
 
 def check_email():
     try:
+        print(f"正在连接邮箱: {EMAIL_USER} ...")
         mail = imaplib.IMAP4_SSL(IMAP_SERVER, 993)
         mail.login(EMAIL_USER, EMAIL_PASS)
         mail.select("inbox")
 
-        # 计算 15 分钟前的时间
-        # GitHub 服务器通常是 UTC 时间，注意时区
-        # CSTNET 很多时候识别内部时间，稳妥起见我们只搜 UNSEEN (未读)
-        # 然后在代码里过滤时间，或者简单点：只推未读的
-        
-        # 搜索所有未读邮件
+        # 1. 依然搜索未读邮件 (UNSEEN)
+        # 这样能过滤掉已读的
         status, messages = mail.search(None, 'UNSEEN')
         email_ids = messages[0].split()
 
-        if email_ids:
-            print(f"发现 {len(email_ids)} 封未读邮件")
-            for e_id in email_ids:
-                _, msg_data = mail.fetch(e_id, '(RFC822)')
-                for response_part in msg_data:
-                    if isinstance(response_part, tuple):
-                        msg = email.message_from_bytes(response_part[1])
-                        subject = clean_text(msg["Subject"])
-                        sender = clean_text(msg["From"])
-                        
-                        # 解析邮件时间，避免推送太久以前的旧未读邮件 (可选优化)
-                        # 这里简单处理：只要是未读的就推
-                        send_bark(f"新邮件: {subject}", f"发件人: {sender}")
-                        
-                        # ⚠️ 关键：GitHub Action 是无状态的。
-                        # 如果不标记为已读，下次运行脚本还会再推一次！
-                        # 所以这里必须标记为已读，或者你需要用数据库记录 ID (太麻烦)
-                        # 如果你不想标记为已读，这个方案在 GitHub Action 上很难完美实现
-                        # mail.store(e_id, '+FLAGS', '\\Seen') 
-        else:
-            print("没有新邮件")
+        if not email_ids:
+            print("📭 没有未读邮件。")
+            return
+
+        print(f"🔍 发现 {len(email_ids)} 封未读邮件，正在检查时间...")
+
+        # 获取当前 UTC 时间
+        now_time = datetime.datetime.now(datetime.timezone.utc)
+        
+        # 设定时间窗口：只推送过去 20 分钟内到达的邮件
+        # (因为 GitHub Action 每 15 分钟跑一次，留 5 分钟缓冲)
+        time_window = datetime.timedelta(minutes=20)
+
+        # 2. 遍历检查每一封未读邮件的时间
+        for e_id in email_ids:
+            # 只获取邮件头 (BODY.PEEK[HEADER])，速度快且不标记为已读
+            _, msg_data = mail.fetch(e_id, '(BODY.PEEK[HEADER])')
+            
+            for response_part in msg_data:
+                if isinstance(response_part, tuple):
+                    msg = email.message_from_bytes(response_part[1])
+                    
+                    # === ⏰ 核心逻辑：解析时间 ===
+                    email_date_str = msg.get("Date")
+                    if email_date_str:
+                        try:
+                            # 将邮件时间字符串转为 datetime 对象
+                            email_dt = parsedate_to_datetime(email_date_str)
+                            
+                            # 统一转为 UTC 进行比较
+                            if email_dt.tzinfo is None:
+                                # 如果邮件时间没有时区信息，假设它是 UTC (防止报错)
+                                email_dt = email_dt.replace(tzinfo=datetime.timezone.utc)
+                            else:
+                                # 转为 UTC
+                                email_dt = email_dt.astimezone(datetime.timezone.utc)
+
+                            # 计算时间差
+                            time_diff = now_time - email_dt
+                            
+                            # === ⚖️ 判断：是否在 20 分钟内？ ===
+                            if time_diff <= time_window and time_diff.total_seconds() >= 0:
+                                # 获取完整内容来解析标题
+                                _, full_data = mail.fetch(e_id, '(BODY.PEEK[])')
+                                full_msg = email.message_from_bytes(full_data[0][1])
+                                subject = clean_text(full_msg["Subject"])
+                                sender = clean_text(full_msg["From"])
+                                
+                                print(f"✅ [新邮件] {subject} (到达于 {int(time_diff.total_seconds()/60)} 分钟前)")
+                                send_bark(f"新邮件: {subject}", f"发件人: {sender}")
+                            else:
+                                # 旧邮件，跳过
+                                # print(f"⏹️ [忽略旧邮件] 到达于 {time_diff} 前，跳过。")
+                                pass
+                                
+                        except Exception as e:
+                            print(f"⚠️ 时间解析错误: {e}")
 
         mail.close()
         mail.logout()
 
     except Exception as e:
-        print(f"运行出错: {e}")
+        print(f"❌ 运行出错: {e}")
 
 if __name__ == "__main__":
     if not BARK_KEY or not EMAIL_PASS:
