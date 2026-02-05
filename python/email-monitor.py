@@ -43,7 +43,7 @@ def send_bark(title, content):
     log(f"🚀 触发推送: {title}")
     enc_title = urllib.parse.quote(title)
     enc_content = urllib.parse.quote(content)
-    url = f"https://api.day.app/{BARK_KEY}/{enc_title}/{enc_content}?level=critical&volume=5"
+    url = f"https://api.day.app/{BARK_KEY}/{enc_title}/{enc_content}?level=critical&volume=3"
     try:
         requests.get(url, timeout=30)
     except Exception as e:
