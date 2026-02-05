@@ -2,14 +2,24 @@ import imaplib
 import email
 from email.header import decode_header
 import requests
-import datetime
 import os
 import urllib.parse
 
-# 从环境变量获取机密信息 (GitHub Secrets)
-BARK_KEY = os.environ.get("BARK_KEY")
-EMAIL_USER = os.environ.get("EMAIL_USER")
-EMAIL_PASS = os.environ.get("EMAIL_PASS")
+# ================= 🔐 解密区域 (适配 ION_MAIL) =================
+# 注意：这里读取的环境变量名必须和 YAML 里定义的一致
+raw_secrets = os.environ.get("ION_MAIL_SECRET")
+
+config = {}
+if raw_secrets:
+    for line in raw_secrets.strip().split('\n'):
+        if ':' in line:
+            key, value = line.split(':', 1)
+            config[key.strip()] = value.strip()
+
+# 从字典中提取配置
+BARK_KEY = config.get("BARK_KEY")
+EMAIL_USER = config.get("EMAIL_USER")
+EMAIL_PASS = config.get("EMAIL_PASS")
 IMAP_SERVER = 'mail.cstnet.cn'
 
 def clean_text(text):
